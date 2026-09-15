@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>منظومة الحسابات السحابية الشاملة</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Cairo', sans-serif; }
+        @media print {
+            body * { visibility: hidden; }
+            #printableInvoice, #printableInvoice * { visibility: visible; }
+            #printableInvoice { position: absolute; left: 0; top: 0; width: 100%; }
+        }
+    </style>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        // بيانات مشروعك الخاص
+        const firebaseConfig = {
+            apiKey: "AIzaSyAcrJAJD_qHOlIFInbvfIFXP1ipKd5fMGc",
+            authDomain: "proooo-4feb0.firebaseapp.com",
+            databaseURL: "https://proooo-4feb0-default-rtdb.firebaseio.com",
+            projectId: "proooo-4feb0",
+            storageBucket: "proooo-4feb0.firebasestorage.app",
+            messagingSenderId: "442817520665",
+            appId: "1:442817520665:web:3aa655a251d5869d287688",
+            measurementId: "G-052PXLZJQX"
+        };
+
+        // تهيئة السيرفر والقواعد السحابية
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        window.db = db;
+        window.dbRef = ref;
+        window.dbSet = set;
+        window.dbUpdate = update;
+
+        // مزامنة المخزون لحظياً أونلاين
+        onValue(ref(db, 'inventory'), (snapshot) => {
+            const data = snapshot.val() || {};
+            window.inventory = Object.values(data);
+            if (window.renderInventory) window.renderInventory();
+        });
+
+        // مزامنة المبيعات لحظياً أونلاين
+        onValue(ref(db, 'sales'), (snapshot) => {
+            const data = snapshot.val() || {};
+            window.sales = Object.values(data);
+            if (window.renderReports) window.renderReports();
+        });
+    </script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-slate-800 border-b border-slate-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center space-x-3 space-x-reverse">
+                <div class="bg-indigo-600 p-2 rounded-lg text-white font-black text-xl">PRO</div>
+                <h1 class="text-xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+                    منظومة الحسابات السحابية
+                </h1>
+            </div>
+            
+            <nav class="flex space-x-2 space-x-reverse bg-slate-900 p-1 rounded-xl border border-slate-700">
+                <button onclick="switchTab('pos')" id="btn-pos" class="nav-btn bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold text-sm transition">🛒 الكاشير (POS)</button>
+                <button onclick="switchTab('inventory')" id="btn-inventory" class="nav-btn text-slate-400 hover:text-white px-4 py-2 rounded-lg font-semibold text-sm transition">📦 المخزن والأصناف</button>
+                <button onclick="switchTab('reports')" id="btn-reports" class="nav-btn text-slate-400 hover:text-white px-4 py-2 rounded-lg font-semibold text-sm transition">📊 التقارير والأرباح</button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
+
+        <!-- 1. شاشة الكاشير -->
+        <div id="tab-pos" class="tab-content grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div class="lg:col-span-8 space-y-4">
+                <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-xl flex gap-3">
+                    <input type="text" id="posSearch" placeholder="أدخل كود الصنف أو الاسم واضغط Enter..." 
+                        class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 text-lg"
+                        onkeypress="handlePosKey(event)">
+                    <button onclick="addToCartByInput()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-6 py-3 rounded-xl transition">
+                        إضافة
+                    </button>
+                </div>
+
+                <div class="bg-slate-800 rounded-2xl border border-slate-700 shadow-xl overflow-hidden">
+                    <div class="p-4 border-b border-slate-700 flex justify-between items-center">
+                        <h2 class="font-bold text-lg text-indigo-400">الفاتورة الحالية</h2>
+                        <span id="cartCount" class="bg-slate-700 text-slate-300 text-xs px-2.5 py-1 rounded-full">0 أصناف</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-right text-slate-300">
+                            <thead class="bg-slate-900/50 text-slate-400 text-sm">
+                                <tr>
+                                    <th class="p-3">الكود</th>
+                                    <th class="p-3">المنتج</th>
+                                    <th class="p-3">السعر</th>
+                                    <th class="p-3 text-center">الكمية</th>
+                                    <th class="p-3">الإجمالي</th>
+                                    <th class="p-3 text-center">إلغاء</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cartTableBody" class="divide-y divide-slate-700/50"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- تفاصيل الحساب -->
+            <div class="lg:col-span-4 space-y-4">
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-xl flex flex-col justify-between h-full">
+                    <div>
+                        <h2 class="font-bold text-lg text-slate-200 pb-3 border-b border-slate-700">ملخص الحساب</h2>
+                        
+                        <div class="space-y-4 my-6">
+                            <div class="flex justify-between text-slate-400">
+                                <span>المجموع:</span>
+                                <span id="cartSubtotal" class="font-bold text-white">0.00 ج.م</span>
+                            </div>
+                            
+                            <div class="flex items-center justify-between gap-2">
+                                <label class="text-slate-400 text-sm">خصم:</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" id="cartDiscount" value="0" min="0" oninput="updateCartTotals()"
+                                        class="w-24 bg-slate-900 border border-slate-700 rounded-lg p-2 text-center text-white focus:outline-none focus:border-indigo-500">
+                                    <span class="text-xs text-slate-500">ج.م</span>
+                                </div>
+                            </div>
+
+                            <div class="border-t border-slate-700 pt-4 flex justify-between items-center">
+                                <span class="text-lg font-bold text-slate-200">الصافي النهائي:</span>
+                                <span id="cartGrandTotal" class="text-2xl font-black text-emerald-400">0.00 ج.م</span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-3 pt-4 border-t border-slate-700">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">طريقة الدفع:</label>
+                                <select id="paymentType" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:outline-none">
+                                    <option value="كاش">كاش (نقدي)</option>
+                                    <option value="آجل">آجل (على الحساب)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">اسم العميل:</label>
+                                <input type="text" id="customerName" placeholder="أدخل اسم العميل..." 
+                                    class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:outline-none">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2 mt-6">
+                        <button onclick="checkout(true)" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl transition shadow-lg shadow-emerald-900/30">
+                            حفظ ومزامنة + طباعة 🖨️
+                        </button>
+                        <button onclick="checkout(false)" class="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold py-2.5 rounded-xl transition">
+                            حفظ ومزامنة فقط
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. المخزن -->
+        <div id="tab-inventory" class="tab-content hidden space-y-6">
+            <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-xl">
+                <h2 class="font-bold text-lg text-indigo-400 mb-4 pb-2 border-b border-slate-700">إضافة صنف جديد للسحابة</h2>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">كود الصنف *</label>
+                        <input type="text" id="prodCode" placeholder="101" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">اسم الصنف *</label>
+                        <input type="text" id="prodName" placeholder="كابل شاحن" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">سعر الشراء (التكلفة)</label>
+                        <input type="number" id="prodCost" placeholder="30" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">سعر البيع للجمهور *</label>
+                        <input type="number" id="prodPrice" placeholder="50" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">الكمية بالمخزن *</label>
+                        <input type="number" id="prodQty" placeholder="10" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white">
+                    </div>
+                </div>
+                <button onclick="saveProductToCloud()" class="mt-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-6 py-2.5 rounded-xl transition">
+                    حفظ ومزامنة على السيرفر ☁️
+                </button>
+            </div>
+
+            <div class="bg-slate-800 rounded-2xl border border-slate-700 shadow-xl overflow-hidden">
+                <div class="p-4 border-b border-slate-700">
+                    <h2 class="font-bold text-lg text-slate-200">المنتجات المسجلة في السحابة</h2>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right text-slate-300">
+                        <thead class="bg-slate-900/50 text-slate-400 text-sm">
+                            <tr>
+                                <th class="p-3">الكود</th>
+                                <th class="p-3">اسم الصنف</th>
+                                <th class="p-3">التكلفة</th>
+                                <th class="p-3">سعر البيع</th>
+                                <th class="p-3">ربح القطعة</th>
+                                <th class="p-3">الكمية المتاحة</th>
+                                <th class="p-3 text-center">إجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventoryTableBody" class="divide-y divide-slate-700/50"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. التقارير -->
+        <div id="tab-reports" class="tab-content hidden space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-xl">
+                    <p class="text-slate-400 text-sm font-semibold">إجمالي المبيعات أونلاين</p>
+                    <h3 id="reportTotalSales" class="text-3xl font-black text-white mt-2">0.00 ج.م</h3>
+                </div>
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-xl">
+                    <p class="text-slate-400 text-sm font-semibold">صافي الأرباح</p>
+                    <h3 id="reportTotalProfit" class="text-3xl font-black text-emerald-400 mt-2">0.00 ج.م</h3>
+                </div>
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-xl">
+                    <p class="text-slate-400 text-sm font-semibold">عدد الفواتير</p>
+                    <h3 id="reportInvoiceCount" class="text-3xl font-black text-indigo-400 mt-2">0</h3>
+                </div>
+            </div>
+
+            <div class="bg-slate-800 rounded-2xl border border-slate-700 shadow-xl overflow-hidden">
+                <div class="p-4 border-b border-slate-700">
+                    <h2 class="font-bold text-lg text-slate-200">سجل الفواتير أونلاين</h2>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right text-slate-300">
+                        <thead class="bg-slate-900/50 text-slate-400 text-sm">
+                            <tr>
+                                <th class="p-3">رقم الفاتورة</th>
+                                <th class="p-3">التاريخ والوقت</th>
+                                <th class="p-3">النوع</th>
+                                <th class="p-3">العميل</th>
+                                <th class="p-3">الإجمالي</th>
+                                <th class="p-3">الربح</th>
+                            </tr>
+                        </thead>
+                        <tbody id="salesHistoryTable" class="divide-y divide-slate-700/50"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- الفاتورة للطباعة -->
+    <div id="printableInvoice" class="p-8 bg-white text-black hidden">
+        <div class="text-center border-b pb-4 mb-4">
+            <h1 class="text-2xl font-black">فاتورة مبيعات</h1>
+            <p class="text-sm text-gray-600" id="invDate"></p>
+            <p class="text-sm text-gray-600">رقم الفاتورة: #<span id="invNum"></span></p>
+        </div>
+        <div class="mb-4 text-sm">
+            <p><strong>طريقة الدفع:</strong> <span id="invType"></span></p>
+            <p><strong>العميل:</strong> <span id="invCustomer"></span></p>
+        </div>
+        <table class="w-full text-right border-collapse mb-4 text-sm">
+            <thead>
+                <tr class="border-b">
+                    <th class="py-2">الصنف</th>
+                    <th class="py-2 text-center">الكمية</th>
+                    <th class="py-2">السعر</th>
+                    <th class="py-2">الإجمالي</th>
+                </tr>
+            </thead>
+            <tbody id="invItems"></tbody>
+        </table>
+        <div class="border-t pt-2 text-left font-black text-lg">
+            <p>الصافي النهائي: <span id="invTotal"></span> ج.م</p>
+        </div>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        window.inventory = [];
+        window.sales = [];
+        let cart = [];
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.classList.remove('bg-indigo-600', 'text-white');
+                btn.classList.add('text-slate-400');
+            });
+
+            document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+            const activeBtn = document.getElementById(`btn-${tabId}`);
+            activeBtn.classList.add('bg-indigo-600', 'text-white');
+            activeBtn.classList.remove('text-slate-400');
+        }
+
+        // حفظ منتج بالسحابة
+        function saveProductToCloud() {
+            const code = document.getElementById('prodCode').value.trim();
+            const name = document.getElementById('prodName').value.trim();
+            const cost = parseFloat(document.getElementById('prodCost').value) || 0;
+            const price = parseFloat(document.getElementById('prodPrice').value) || 0;
+            const qty = parseInt(document.getElementById('prodQty').value) || 0;
+
+            if (!code || !name || price <= 0) return alert('يرجى كتابة الكود والاسم وسعر البيع!');
+
+            window.dbSet(window.dbRef(window.db, 'inventory/' + code), { code, name, cost, price, qty })
+                .then(() => {
+                    alert('تم حفظ المنتج ومزامنتها بنجاح أونلاين!');
+                    clearProdInputs();
+                })
+                .catch(err => alert('خطأ في الاتصال: ' + err.message));
+        }
+
+        function clearProdInputs() {
+            document.getElementById('prodCode').value = '';
+            document.getElementById('prodName').value = '';
+            document.getElementById('prodCost').value = '';
+            document.getElementById('prodPrice').value = '';
+            document.getElementById('prodQty').value = '';
+        }
+
+        window.renderInventory = function() {
+            const tbody = document.getElementById('inventoryTableBody');
+            tbody.innerHTML = window.inventory.map(p => `
+                <tr class="hover:bg-slate-700/30">
+                    <td class="p-3 font-bold text-indigo-400">${p.code}</td>
+                    <td class="p-3 font-semibold text-white">${p.name}</td>
+                    <td class="p-3">${(p.cost || 0).toFixed(2)} ج.م</td>
+                    <td class="p-3 font-semibold text-white">${p.price.toFixed(2)} ج.م</td>
+                    <td class="p-3 text-emerald-400">${(p.price - (p.cost || 0)).toFixed(2)} ج.م</td>
+                    <td class="p-3 font-bold ${p.qty <= 2 ? 'text-rose-500' : 'text-slate-200'}">${p.qty}</td>
+                    <td class="p-3 text-center">
+                        <button onclick="deleteProductFromCloud('${p.code}')" class="text-rose-400 hover:text-rose-300">حذف</button>
+                    </td>
+                </tr>
+            `).join('');
+        };
+
+        function deleteProductFromCloud(code) {
+            if (confirm('تأكيد حذف الصنف نهائياً من السحابة؟')) {
+                window.dbSet(window.dbRef(window.db, 'inventory/' + code), null);
+            }
+        }
+
+        // الكاشير
+        function handlePosKey(e) {
+            if (e.key === 'Enter') addToCartByInput();
+        }
+
+        function addToCartByInput() {
+            const query = document.getElementById('posSearch').value.trim();
+            if (!query) return;
+
+            const prod = window.inventory.find(p => p.code === query || p.name.includes(query));
+            if (!prod) return alert('الصنف غير مسجل بالمخزن!');
+            if (prod.qty <= 0) return alert('الكمية المتاحة بالمخزن انتهت!');
+
+            const cartItem = cart.find(c => c.code === prod.code);
+            if (cartItem) {
+                if (cartItem.qty + 1 > prod.qty) return alert('الكمية المتاحة بالمخزن لا تكفي!');
+                cartItem.qty++;
+            } else {
+                cart.push({ ...prod, qty: 1 });
+            }
+
+            document.getElementById('posSearch').value = '';
+            renderCart();
+        }
+
+        function updateCartQty(code, newQty) {
+            const item = cart.find(c => c.code === code);
+            const prod = window.inventory.find(p => p.code === code);
+            if (newQty > prod.qty) {
+                alert('الكمية بالمخزن لا تكفي!');
+                return renderCart();
+            }
+            if (newQty <= 0) {
+                cart = cart.filter(c => c.code !== code);
+            } else {
+                item.qty = parseInt(newQty);
+            }
+            renderCart();
+        }
+
+        function renderCart() {
+            const tbody = document.getElementById('cartTableBody');
+            document.getElementById('cartCount').innerText = `${cart.length} أصناف`;
+            
+            tbody.innerHTML = cart.map(c => `
+                <tr>
+                    <td class="p-3 font-bold text-slate-400">${c.code}</td>
+                    <td class="p-3 font-semibold text-white">${c.name}</td>
+                    <td class="p-3">${c.price.toFixed(2)}</td>
+                    <td class="p-3 text-center">
+                        <input type="number" value="${c.qty}" min="1" 
+                            class="w-16 bg-slate-900 border border-slate-700 rounded-lg p-1 text-center text-white focus:outline-none" 
+                            onchange="updateCartQty('${c.code}', this.value)">
+                    </td>
+                    <td class="p-3 font-bold text-emerald-400">${(c.price * c.qty).toFixed(2)}</td>
+                    <td class="p-3 text-center">
+                        <button onclick="updateCartQty('${c.code}', 0)" class="text-rose-400 hover:text-rose-300 font-bold">✕</button>
+                    </td>
+                </tr>
+            `).join('');
+
+            updateCartTotals();
+        }
+
+        function updateCartTotals() {
+            const subtotal = cart.reduce((acc, c) => acc + (c.price * c.qty), 0);
+            const discount = parseFloat(document.getElementById('cartDiscount').value) || 0;
+            const grandTotal = Math.max(0, subtotal - discount);
+
+            document.getElementById('cartSubtotal').innerText = subtotal.toFixed(2) + ' ج.م';
+            document.getElementById('cartGrandTotal').innerText = grandTotal.toFixed(2) + ' ج.م';
+        }
+
+        function checkout(shouldPrint) {
+            if (cart.length === 0) return alert('الفاتورة فارغة!');
+
+            const subtotal = cart.reduce((acc, c) => acc + (c.price * c.qty), 0);
+            const totalCost = cart.reduce((acc, c) => acc + ((c.cost || 0) * c.qty), 0);
+            const discount = parseFloat(document.getElementById('cartDiscount').value) || 0;
+            const grandTotal = Math.max(0, subtotal - discount);
+            const profit = grandTotal - totalCost;
+
+            const paymentType = document.getElementById('paymentType').value;
+            const customerName = document.getElementById('customerName').value.trim() || 'عميل نقدي';
+            const invoiceId = Date.now();
+
+            let updates = {};
+
+            // خصم المبيعات لحظياً أونلاين
+            cart.forEach(item => {
+                const currentQty = window.inventory.find(p => p.code === item.code).qty;
+                updates[`inventory/${item.code}/qty`] = currentQty - item.qty;
+            });
+
+            const invoice = {
+                id: invoiceId,
+                date: new Date().toLocaleString('ar-EG'),
+                items: [...cart],
+                grandTotal,
+                profit,
+                paymentType,
+                customerName
+            };
+
+            updates[`sales/${invoiceId}`] = invoice;
+
+            window.dbUpdate(window.dbRef(window.db), updates)
+                .then(() => {
+                    if (shouldPrint) printInvoice(invoice);
+
+                    cart = [];
+                    document.getElementById('cartDiscount').value = 0;
+                    document.getElementById('customerName').value = '';
+                    renderCart();
+                    alert('تمت العملية وخصم البضاعة أونلاين ومزامنتها على كل الأجهزة!');
+                })
+                .catch(err => alert('خطأ أثناء الحفظ: ' + err.message));
+        }
+
+        function printInvoice(inv) {
+            document.getElementById('invNum').innerText = inv.id;
+            document.getElementById('invDate').innerText = inv.date;
+            document.getElementById('invType').innerText = inv.paymentType;
+            document.getElementById('invCustomer').innerText = inv.customerName;
+            document.getElementById('invTotal').innerText = inv.grandTotal.toFixed(2);
+
+            document.getElementById('invItems').innerHTML = inv.items.map(i => `
+                <tr class="border-b">
+                    <td class="py-1">${i.name}</td>
+                    <td class="py-1 text-center">${i.qty}</td>
+                    <td class="py-1">${i.price.toFixed(2)}</td>
+                    <td class="py-1">${(i.price * i.qty).toFixed(2)}</td>
+                </tr>
+            `).join('');
+
+            const invoiceElem = document.getElementById('printableInvoice');
+            invoiceElem.classList.remove('hidden');
+            window.print();
+            invoiceElem.classList.add('hidden');
+        }
+
+        window.renderReports = function() {
+            const totalSales = window.sales.reduce((acc, s) => acc + (s.grandTotal || 0), 0);
+            const totalProfit = window.sales.reduce((acc, s) => acc + (s.profit || 0), 0);
+
+            document.getElementById('reportTotalSales').innerText = totalSales.toFixed(2) + ' ج.م';
+            document.getElementById('reportTotalProfit').innerText = totalProfit.toFixed(2) + ' ج.م';
+            document.getElementById('reportInvoiceCount').innerText = window.sales.length;
+
+            const tbody = document.getElementById('salesHistoryTable');
+            tbody.innerHTML = window.sales.slice().reverse().map(s => `
+                <tr class="hover:bg-slate-700/30">
+                    <td class="p-3 font-bold text-indigo-400">#${s.id}</td>
+                    <td class="p-3 text-slate-400 text-sm">${s.date}</td>
+                    <td class="p-3">${s.paymentType}</td>
+                    <td class="p-3 font-semibold text-white">${s.customerName}</td>
+                    <td class="p-3 font-bold text-emerald-400">${(s.grandTotal || 0).toFixed(2)} ج.م</td>
+                    <td class="p-3 text-indigo-300 font-semibold">${(s.profit || 0).toFixed(2)} ج.م</td>
+                </tr>
+            `).join('');
+        };
+    </script>
+</body>
+</html>
